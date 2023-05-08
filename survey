@@ -1,0 +1,122 @@
+import os
+import pandas as pd
+import logging
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, ConversationHandler
+import time
+
+# Set up logging
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+
+# Define the questions and answer choices
+questions = ['Do you feel responsible for the feelings and actions of other family members?',
+             'Do you feel guilty or anxious when you try to assert your own needs or boundaries?',
+          ]
+answer_choices = ['Strongly Agree', 'Agree', 'Don\'t Know', 'Disagree', 'Strongly Disagree']
+
+# Create a dictionary to store the answers
+user_data = {}
+
+# Define the survey function
+def start_survey(update, context):
+    # Prompt the user for their name
+    context.bot.send_message(chat_id=-988659400, text='What is your name?')
+    return 'NAME'
+
+
+
+def save_name(update, context):
+    print('save_name function called')
+    # Save the user's name and start the survey
+    user_data['name'] = update.message.text
+    context.bot.send_message(chat_id=update.effective_chat.id, text=f'Hello, {user_data["name"]}! Let\'s start the survey. Please answer the following questions:')
+    user_data['answers'] = {}
+    user_data['question_index'] = 0
+    ask_question(update, context)
+    return 'SURVEY'
+
+def ask_question(update, context):
+    print('ask_question function called')
+    # Ask the next question
+    question = questions[user_data['question_index']]
+    message_text = f'{question}\n'
+    for i, answer_choice in enumerate(answer_choices):
+        message_text += f'{i+1}. {answer_choice}\n'
+    context.bot.send_message(chat_id=update.effective_chat.id, text=message_text)
+    return 'ANSWER'
+
+def save_answer(update, context):
+    # Save the user's answer and ask the next question
+    answer_index = int(update.message.text) - 1
+    user_data['answers'][questions[user_data['question_index']]] = answer_choices[answer_index]
+    user_data['question_index'] += 1
+    if user_data['question_index'] == len(questions):
+        # Calculate the total score and send the result to the user
+        score = sum([5 if answer == 'Strongly Agree' else 4 if answer == 'Agree' else 3 if answer == 'Don\'t Know' else 2 if answer == 'Disagree' else 1 for answer in user_data['answers'].values()])
+        result_text = f'Thank you for completing the survey, {user_data["name"]}! Your total score is {score} out of 50.'
+        context.bot.send_message(chat_id=update.effective_chat.id, text=result_text)
+        # Save the survey data to a CSV file
+        df = pd.DataFrame.from_dict(user_data['answers'], orient='index', columns=['Answer'])
+        df.index.name = 'Question'
+        df['Name'] = user_data['name']
+        df['Score'] = score
+        df.to_csv('survey_results.csv', mode='a', header=not os.path.exists('survey_results.csv'))
+        return ConversationHandler.END
+    else:
+        ask_question(update, context)
+        return 'ANSWER'
+
+def cancel_survey(update, context):
+    user = update.message.from_user
+    logging.info("User %s canceled the survey.", user.first_name)
+    context.bot.send_message(chat_id=update.effective_chat.id, text="The survey has been cancelled. If you want to take the survey again, type /start.")
+    return ConversationHandler.END
+def handle_message(update, context):
+    message_text = update.message.text.lower()
+    if 'hello' in message_text:
+        context.bot.send_message(chat_id=update.effective_chat.id, text='Hello there!')
+    elif 'goodbye' in message_text:
+        context.bot.send_message(chat_id=update.effective_chat.id, text='Goodbye!')
+    else:
+        context.bot.send_message(chat_id=update.effective_chat.id, text='Sorry, I didn\'t understand what you said.')
+    return 'MESSAGE'
+
+
+def main():
+    while True:
+        try:
+            # Create the Updater and pass it your bot's token.
+            updater = Updater(token='5124370571:AAEQ2rWZ0PG0Mm0ZSEh0kHFicMnJT3spFA4', use_context=True)
+
+            # Get the dispatcher to register handlers
+            dispatcher = updater.dispatcher
+
+            # Add conversation handler
+            conv_handler = ConversationHandler(
+                entry_points=[CommandHandler('start', start_survey)],
+                states={
+                    'NAME': [MessageHandler(Filters.text & ~Filters.command, save_name)],
+                    'SURVEY': [MessageHandler(Filters.text & ~Filters.command, ask_question)],
+                    'ANSWER': [MessageHandler(Filters.regex('^[1-5]$'), save_answer)],
+                    'MESSAGE': [MessageHandler(Filters.text & ~Filters.command, handle_message)]
+      
+                },
+                fallbacks=[CommandHandler('cancel', cancel_survey)]
+            )
+            dispatcher.add_handler(conv_handler)
+
+            # Start the Bot
+            updater.start_polling()
+
+            # Run the bot until you press Ctrl-C or the process receives SIGINT, SIGTERM or SIGABRT
+            updater.idle()
+
+        except KeyboardInterrupt:
+            print('Keyboard interrupt received, stopping...')
+            updater.stop()
+            break
+
+        except Exception as e:
+            print(f'Error: {e}')
+            time.sleep(10)
+if __name__ == '__main__':
+    main()
